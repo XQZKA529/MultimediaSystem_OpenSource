@@ -1,0 +1,91 @@
+# HX4S20 VCCO_2 is 3.3V; RGMII and sys_clk (R7) share Bank 2.
+# PHY SELRGV/DVDD25 does not set FPGA Bank supply; keep board I/O at 3.3V.
+# Board local pins; T13 is input/PHY strap. TX delay follows vendor demo.
+set_pin_assignment { sys_clk }   { LOCATION = R7; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { sys_rst_n } { LOCATION = A2; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { HDMI_CLK_P } { LOCATION = K1; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { HDMI_D2_P  } { LOCATION = B3; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { HDMI_D1_P  } { LOCATION = E3; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { HDMI_D0_P  } { LOCATION = F5; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { HDMI_DDC_SCL } { LOCATION = P2; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
+set_pin_assignment { HDMI_DDC_SDA } { LOCATION = R2; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
+set_pin_assignment { LED1   } { LOCATION = A4;  IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = NONE; }
+set_pin_assignment { VGA_HS }   { LOCATION = virtualIO; }
+set_pin_assignment { VGA_VS }   { LOCATION = virtualIO; }
+set_pin_assignment { DBG_BMP_LOAD_DONE } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_R[0] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_R[1] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_R[2] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_R[3] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_R[4] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_R[5] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_R[6] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_R[7] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_G[0] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_G[1] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_G[2] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_G[3] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_G[4] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_G[5] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_G[6] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_G[7] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_B[0] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_B[1] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_B[2] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_B[3] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_B[4] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_B[5] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_B[6] } { LOCATION = virtualIO; }
+set_pin_assignment { VGA_B[7] } { LOCATION = virtualIO; }
+set_pin_assignment { rgmii_rxc } { LOCATION=T14; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_rx_ctl } { LOCATION=T13; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_rxd[0] } { LOCATION=P6; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_rxd[1] } { LOCATION=M6; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_rxd[2] } { LOCATION=T9; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_rxd[3] } { LOCATION=N9; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+# RGMII TX pads.  These follow the vendor's HX4S20 reference EXACTLY (its
+# ph1_demo.adc, live/in-use block): DRIVESTRENGTH=8 on all six TX pins, no
+# SLEWRATE and NO OUTDEL anywhere.  A previous revision used
+#   DRIVESTRENGTH=16; SLEWRATE=FAST   on all six
+#   OUTDEL=3                          on rgmii_txc ONLY
+# and that combination was copied from the reference's *commented-out* block,
+# which targets a different board (M21/K18/L15/...).  Two things were wrong:
+#   1. OUTDEL=3 on tx_clk but not on tx_ctl/txd adds a fixed TXC-to-data skew
+#      that the PHY was never budgeted for - and because it is asymmetric it
+#      cannot be recovered.  1Gbps RGMII needs TXC centred in the data eye
+#      (RGMII v2.0 requires ~1.0-2.0ns), and the reference obtains that purely
+#      from the PHY's own timing, with no added pad delay.
+#   2. DRIVESTRENGTH=16 + SLEWRATE=FAST edge-rates a 125MHz DDR bus far harder
+#      than the reference's 8mA/slow setting, which rings and overshoots on a
+#      point-to-point link and corrupts the far end's capture eye.
+set_pin_assignment { rgmii_txc } { LOCATION=T12; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_tx_ctl } { LOCATION=T7; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_txd[0] } { LOCATION=T4; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_txd[1] } { LOCATION=T6; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_txd[2] } { LOCATION=M7; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_txd[3] } { LOCATION=T8; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { mdc } { LOCATION=L13; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { mdio } { LOCATION=M13; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { DBG_LINK_UP } { LOCATION=virtualIO; }
+set_pin_assignment { DBG_LINK_EVENTS[0] } { LOCATION=virtualIO; }
+set_pin_assignment { DBG_LINK_EVENTS[1] } { LOCATION=virtualIO; }
+set_pin_assignment { DBG_LINK_EVENTS[2] } { LOCATION=virtualIO; }
+
+# J2 GPIOB_26 (pin 31) SCL; GPIOB_28 (pin 33) SDA. External 3.3V pullups.
+set_pin_assignment { KEYPAD_SCL } { LOCATION = J12; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; }
+set_pin_assignment { KEYPAD_SDA } { LOCATION = K14; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; }
+
+set_pin_assignment { DBG_EMERGENCY_STATUS[0] } { LOCATION = virtualIO; }
+set_pin_assignment { DBG_EMERGENCY_STATUS[1] } { LOCATION = virtualIO; }
+set_pin_assignment { DBG_EMERGENCY_STATUS[2] } { LOCATION = virtualIO; }
+set_pin_assignment { DBG_EMERGENCY_STATUS[3] } { LOCATION = virtualIO; }
+set_pin_assignment { DBG_EMERGENCY_STATUS[4] } { LOCATION = virtualIO; }
+set_pin_assignment { DBG_EMERGENCY_STATUS[5] } { LOCATION = virtualIO; }
+set_pin_assignment { DBG_EMERGENCY_STATUS[6] } { LOCATION = virtualIO; }
+set_pin_assignment { DBG_EMERGENCY_STATUS[7] } { LOCATION = virtualIO; }
+set_pin_assignment { DBG_EMERGENCY_MODE[0] } { LOCATION = virtualIO; }
+set_pin_assignment { DBG_EMERGENCY_MODE[1] } { LOCATION = virtualIO; }
+
+# Local emergency inputs: J2 pins 1/2, 3.3V active high, default low.
+set_pin_assignment { GPIOB0 } { LOCATION = P4; IOSTANDARD = LVCMOS33; PULLTYPE = PULLDOWN; }
+set_pin_assignment { GPIOB1 } { LOCATION = N4; IOSTANDARD = LVCMOS33; PULLTYPE = PULLDOWN; }

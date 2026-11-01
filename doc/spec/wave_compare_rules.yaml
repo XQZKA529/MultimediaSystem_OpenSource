@@ -1,0 +1,235 @@
+# first-mismatch 比对规则
+#
+# 判定顺序固定：先判"是否走错误分支"，再判"窗口/黑边"，再判"窗口内内容"，
+# 最后才判"读口相位"。顺序颠倒会把可解释的差异误判成随机噪声。
+version: 1
+sample_defaults:
+  clock: clk
+  sample_edge: posedge clk
+  note: |
+    所有 pix 域信号在 posedge clk 采样；sdr 域信号在 posedge sdr_clk 采样。
+    跨域信号（灰码指针 / active_region / toggle）只允许"晚看到"，不允许"跳变"。
+
+rules:
+  # ---------------- 组 0：健康门（不通过就不要再往下判） ----------------
+  - id: CMP-000
+    behavior_rule: BEH-010
+    signal: frame_ready
+    sample_edge: posedge clk
+    expected: 每次加载恰出现 1 个单拍脉冲；且出现在 wf 排空 + drain ack 之后
+    tolerance_cycles: 0
+    classify_mismatch_as:
+      dut: frame_ready 多拍/缺失 ⇒ 加载完成握手错误
+      tb: 加载流程未完成就采样
+      rule: 该判据与需求冲突
+      dump: 未连 frame_ready / 采样沿错误
+
+  - id: CMP-001
+    behavior_rule: BEH-001
+    signal: active_region, load_region, load_base, lb_wr_ptr, lb_rd_ptr
+    sample_edge: posedge clk
+    expected: 复位释放后 8 拍内达稳态（0, 1, R1_BASE, 0, 0）
+    tolerance_cycles: 8
+    classify_mismatch_as:
+      dut: 复位状态不确定 ⇒ 首次加载可能写入错误区域
+      tb: 复位时长不足
+      rule: 稳态期望值与需求冲突
+      dump: 复位信号未加或极性反
+
+  # ---------------- 组 1：区域翻转时机（缺陷 2 / BEH-003） ----------------
+  - id: CMP-010
+    behavior_rule: BEH-003
+    signal: active_region
+    sample_edge: posedge clk
+    expected: |
+      每次跳变都必须满足 (a) scan_de == 0；(b) 距最近一次 scan_vs 上升沿 ≤1 pclk；
+      且 (c) 一个显示帧内跳变次数 ≤1
+    tolerance_cycles: 1
+    reference_event: vs_rise
+    classify_mismatch_as:
+      dut: 翻转落在有效扫描区 ⇒ 该帧出现"旧区域行上屏"（缺陷 2 主因之一）
+      tb: TB 的 scan_vs/scan_de 发生器与真实 display_layer 不同构（本 TB 的消隐只有 40 拍，远小于真实 160 拍）
+      rule: 期望与需求冲突
+      dump: scan_vs/scan_de 未 dump 或采样域错误
+
+  - id: CMP-011
+    behavior_rule: BEH-003, INV-004
+    signal: pf_st, rf_wptr, rf_rptr, lb_wr_ptr
+    sample_edge: posedge sdr_clk
+    expected: |
+      active_region（经 active_region_s 同步后）跳变的那一拍，
+      pf_st == P_IDLE 且 rf_wptr == rf_rptr；或者跳变后 1 个突发内
+      这两个条件必须成立（即行流水线已被重建）
+    tolerance_cycles: 0
+    reference_event: region_flip
+    classify_mismatch_as:
+      dut: 翻转未失效行流水线 ⇒ 旧区域数据被当作有效行输出（缺陷 2 主因）
+      tb: 跨域采样点选错（active_region 是 pix 域信号）
+      rule: 期望与需求冲突
+      dump: 未 dump pf_st/rf 指针
+
+  - id: CMP-012
+    behavior_rule: BEH-007, INV-001
+    signal: pf_addr_base
+    sample_edge: posedge sdr_clk
+    expected: |
+      帧首行（vs_rise 后第一个 rf 弹出并进入 P_PREP 的突发）的
+      pf_addr_base 必须 ∈ [新区域基址, 新区域基址 + LINE_WORDS*OUT_H)
+    tolerance_cycles: 0
+    reference_event: vs_rise
+    classify_mismatch_as:
+      dut: 帧首行取自旧区域 ⇒ 顶部横条（缺陷 2）
+      tb: 新区域编号期望值算错
+      rule: region 基址定义与需求冲突
+      dump: pf_addr_base / rd_base 未 dump
+
+  # ---------------- 组 2：窗口与黑边（缺陷 2 / BEH-008） ----------------
+  - id: CMP-020
+    behavior_rule: BEH-008
+    signal: disp_y0, disp_y1, in_win, pic_rgb
+    sample_edge: posedge clk
+    expected: |
+      窗口 = [x_off, x_off+dst_w-1] × [y_off, y_off+dst_h-1]；
+      在 de 有效期内，y_pos < disp_y0 或 y_pos > disp_y1 的像素，
+      rgb_out 必须为 24'h000000（不受帧缓存内容影响）
+    tolerance_cycles: 1
+    classify_mismatch_as:
+      dut: 窗口锁存/更新时机错误（假设 H1）⇒ 黑边露出帧缓存内容
+      tb: 窗口期望值按源图尺寸算错（注意 UPSCALE_EN=0 时 q 被钳到 1.0）
+      rule: 窗口定义与需求冲突
+      dump: disp_* 未 dump
+
+  - id: CMP-021
+    behavior_rule: BEH-008, INV-009
+    signal: disp_y0, show_bmp
+    sample_edge: posedge clk
+    expected: disp_* 的更新拍与 show_bmp 抬升拍属于同一帧（不得出现旧窗口配新帧）
+    tolerance_cycles: 2 * 1600
+    classify_mismatch_as:
+      dut: 窗口与帧内容不同步 ⇒ 图片位置或黑边错位
+      tb: —
+      rule: —
+      dump: —
+
+  # ---------------- 组 3：窗口内内容（缺陷 1 / 缺陷 2 的残留） ----------------
+  - id: CMP-030
+    behavior_rule: BEH-012, INV-010
+    signal: lb_rd_data
+    sample_edge: posedge clk
+    expected: |
+      de 有效期内，x_pos ∈ 窗口的每个像素必须等于源图对应像素
+      （q=1.0 1:1 直通；BMP 底向上时按 pix_y 反算源行）
+    tolerance_cycles: 0
+    reference: tools/check_frame.py 的权威模型
+    classify_mismatch_as:
+      dut: 写格 → SDRAM → 行缓冲 → 读口 任一环节错（1 像素错=槽位；2 像素成对错=dm；8 像素成行错=组基址）
+      tb: 捕获相位错（必须 bar_de(n) 配 lb_rd_data(n+1)，见 tb_frame_store.v:143-158）
+      rule: 期望模型与需求冲突
+      dump: 采样沿错 1 拍 ⇒ 全局 dx=1 假错位
+
+  - id: CMP-031
+    behavior_rule: INV-008, INV-001
+    signal: pf_addr_base, ga_base
+    sample_edge: posedge sdr_clk
+    expected: |
+      row_base(y) 必须 == y * LINE_WORDS。
+      sim（OUT_W=160 ⇒ LINE_WORDS=80）下，region0 行集合与 region1 行集合必须不相交；
+      即任何 ga_base/pf_addr_base 都不得同时落入两个区域的地址区间
+    tolerance_cycles: 0
+    classify_mismatch_as:
+      dut: row_base 写死字面量导致 sim 与上板不同构 ⇒ 无法用 sim 验证双缓冲（INV-008；板上级联因 LINE_WORDS=800 恰好掩盖）
+      tb: —
+      rule: —
+      dump: —
+
+  - id: CMP-032
+    behavior_rule: BEH-009, BEH-014, INV-005, INV-006, INV-011
+    signal: app_wr_en_r, app_wr_addr_r, app_wr_dm_r, wr_beat_cnt
+    sample_edge: posedge sdr_clk
+    expected: |
+      ① app_wr_en_r 一旦拉高连续 ≥4 拍；
+      ② 每组首拍 app_wr_addr_r[1:0] == 2'b00；
+      ③ 组内第 2~4 拍 app_wr_addr_r 忽略（真核按基址内部累加）；
+      ④ **组内不得出现 app_wr_en_r 中途拉低**（否则核的组相位与 wr_beat_cnt 永久错位）；
+      ⑤ wr_beat_cnt 与模型内部 wr_grp_beat 的相位在整个帧内始终一致；
+      ⑥ 行为模型 0 条 WARN
+    tolerance_cycles: 0
+    classify_mismatch_as:
+      dut: 违反 APUG011 写通道契约 ⇒ 上板像素错位/丢失；组内被拒单拍 ⇒ 后续组全部错位（H6）
+      tb: —
+      rule: —
+      dump: 模型 WARN 被过滤掉；wr_beat_cnt/wr_grp_beat 未 dump
+
+  - id: CMP-033
+    behavior_rule: BEH-014, INV-012
+    signal: sdr_init_ref_vld, can_op, app_wr_en_r, app_rd_en
+    sample_edge: posedge sdr_clk
+    expected: |
+      刷新避让只发生在组边界/突发边界：sdr_init_ref_vld 拉高期间
+      app_wr_en_r 只能在"上一组已满 4 拍"之后才暂停；app_rd_en 的暂停点
+      必须与突发收敛判据解耦（不得因暂停而永不收敛）
+    tolerance_cycles: 0
+    classify_mismatch_as:
+      dut: 组内/突发内避让 ⇒ 核按 accept 拍计数导致相位错位或死锁
+      tb: 注错时刻不在组/突发边界
+      rule: 期望与需求冲突
+      dump: —
+
+  - id: CMP-034
+    behavior_rule: INV-012
+    signal: wr_accept, rd_accept
+    sample_edge: posedge sdr_clk
+    expected: |
+      行为模型的 accept 条件必须与文档化真核一致（APUG011 p.44：正常读写
+      不考虑刷新；官方 app_wrrd.v 仅在突发开始前查一次 Sdr_init_ref_vld）。
+      当前模型逐拍门控 !Sdr_init_ref_vld，比真核更严 ⇒ 仿真可能暴露上板
+      不存在的死锁、同时掩盖真实风险
+    tolerance_cycles: 0
+    classify_mismatch_as:
+      dut: 模型失真导致仿真结论不可外推到上板
+      tb: —
+      rule: —
+      dump: —
+
+  # ---------------- 组 4：预取收敛（BEH-011） ----------------
+  - id: CMP-040
+    behavior_rule: BEH-011
+    signal: pf_st, pf_got, pf_issue
+    sample_edge: posedge sdr_clk
+    expected: |
+      每个突发在有限拍内到达 burst_done 并回到 P_IDLE；
+      在定向注错（强制 sdr_init_ref_vld 拉高 1 拍覆盖某一笔读）后仍必须收敛
+    tolerance_cycles: LINE_WORDS * 4
+    classify_mismatch_as:
+      dut: P_DRAIN 等精确相等且未补发 ⇒ 永久挂起、画面冻结
+      tb: 注错时刻落在突发之外（无效注错）
+      rule: 期望与需求冲突
+      dump: sdr_init_ref_vld 上探针但被组合优化掉
+
+  - id: CMP-041
+    behavior_rule: BEH-005
+    signal: rf_wptr, rf_rptr
+    sample_edge: posedge sdr_clk
+    expected: 每个显示帧内压入 rf 的行请求数 == OUT_H（900）；丢弃计数 == 0
+    tolerance_cycles: 0
+    classify_mismatch_as:
+      dut: rf_full 时静默丢弃请求 ⇒ 某行永久停留在旧内容（横条）
+      tb: scan 发生器的行数与 OUT_H 不一致
+      rule: —
+      dump: rf 计数器未 dump
+
+  # ---------------- 组 5：读口相位（假设 H4，需上板读回） ----------------
+  - id: CMP-050
+    behavior_rule: BEH-012
+    signal: sdr_rd_dout_w
+    sample_edge: posedge sdr_clk
+    expected: |
+      读回数据与写入数据逐字相等。板上用渐变/棋盘图案做"写入-读回"自检，
+      统计错值分布：若错值集中在特定地址带（行激活/刷新边界）⇒ 怀疑 DQ 采样相位
+    tolerance_cycles: 0
+    reference: 板上读回自检（README §14 阶段 A 第 5 条）
+    classify_mismatch_as:
+      dut: PHY 采样相位边缘（SDC 已把该路径 set_false_path，STA 无法覆盖）
+      tb: —
+      rule: —
+      dump: 仿真模型不建模 PHY 相位 ⇒ 仿真无法复现该类错误（必须上板）

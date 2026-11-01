@@ -1,0 +1,1 @@
+This subtitle is intentionally longer than the 74 character static window, so the complete sentence scrolls smoothly through the centered display area.

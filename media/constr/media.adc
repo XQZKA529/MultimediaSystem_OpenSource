@@ -1,0 +1,49 @@
+# HX4S20 VCCO_2 is 3.3V; RGMII and sys_clk (R7) share Bank 2.
+# PHY SELRGV/DVDD25 does not set FPGA Bank supply; keep board I/O at 3.3V.
+# Board local pins; T13 is input/PHY strap. TX delay follows vendor demo.
+set_pin_assignment { sys_clk }   { LOCATION = R7; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { sys_rst_n } { LOCATION = A2; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { SD_CLK  } { LOCATION = A14; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = NONE; }
+set_pin_assignment { SD_CMD  } { LOCATION = A13; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = NONE; }
+set_pin_assignment { SD_DAT0 } { LOCATION = B14; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; }
+set_pin_assignment { SD_DAT1 } { LOCATION = B15; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; }
+set_pin_assignment { SD_DAT2 } { LOCATION = A11; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; }
+set_pin_assignment { SD_DAT3 } { LOCATION = A12; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; }
+set_pin_assignment { LED1   } { LOCATION = A4;  IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = NONE; }
+set_pin_assignment { KEY2 } { LOCATION = B2; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; }
+set_pin_assignment { KEY3 } { LOCATION = B1; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; }
+set_pin_assignment { KEY4 } { LOCATION = C1; IOSTANDARD = LVCMOS33; PULLTYPE = PULLUP; }
+set_pin_assignment { rgmii_rxc } { LOCATION=T14; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_rx_ctl } { LOCATION=T13; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_rxd[0] } { LOCATION=P6; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_rxd[1] } { LOCATION=M6; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_rxd[2] } { LOCATION=T9; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_rxd[3] } { LOCATION=N9; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+# RGMII TX pads.  These follow the vendor's HX4S20 reference EXACTLY (its
+# ph1_demo.adc, live/in-use block): DRIVESTRENGTH=8 on all six TX pins, no
+# SLEWRATE and NO OUTDEL anywhere.  A previous revision used
+#   DRIVESTRENGTH=16; SLEWRATE=FAST   on all six
+#   OUTDEL=3                          on rgmii_txc ONLY
+# and that combination was copied from the reference's *commented-out* block,
+# which targets a different board (M21/K18/L15/...).  Two things were wrong:
+#   1. OUTDEL=3 on tx_clk but not on tx_ctl/txd adds a fixed TXC-to-data skew
+#      that the PHY was never budgeted for - and because it is asymmetric it
+#      cannot be recovered.  1Gbps RGMII needs TXC centred in the data eye
+#      (RGMII v2.0 requires ~1.0-2.0ns), and the reference obtains that purely
+#      from the PHY's own timing, with no added pad delay.
+#   2. DRIVESTRENGTH=16 + SLEWRATE=FAST edge-rates a 125MHz DDR bus far harder
+#      than the reference's 8mA/slow setting, which rings and overshoots on a
+#      point-to-point link and corrupts the far end's capture eye.
+# Symptom this produced: the link LED was healthy (PHY in-band status is a
+# separate slow channel) but frames kept failing CRC, so the reliable-link
+# layer retransmitted forever -> peer_age expired -> session_reset -> the
+# LINK DOWN / WAIT DATA flicker.
+set_pin_assignment { rgmii_txc } { LOCATION=T12; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_tx_ctl } { LOCATION=T7; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_txd[0] } { LOCATION=T4; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_txd[1] } { LOCATION=T6; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_txd[2] } { LOCATION=M7; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { rgmii_txd[3] } { LOCATION=T8; IOSTANDARD=LVCMOS33; DRIVESTRENGTH=8; PULLTYPE=NONE; }
+set_pin_assignment { mdc } { LOCATION=L13; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+set_pin_assignment { mdio } { LOCATION=M13; IOSTANDARD=LVCMOS33; PULLTYPE=NONE; }
+

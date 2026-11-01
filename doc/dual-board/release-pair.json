@@ -1,0 +1,77 @@
+{
+  "protocol": "1.0",
+  "tool": "Tang Dynasty 6.2.168116",
+  "device": "EG4S20BG256",
+  "status": "historical tool-qualified builds; functional hardware recovery confirmed by user on 2026-10-07; current downloaded bit pair not registered",
+  "boards": [
+    {
+      "board": "media",
+      "setup_wns_ns": 0.104,
+      "setup_tns_ns": 0.0,
+      "hold_wns_ns": 0.003,
+      "hold_tns_ns": 0.0,
+      "slice_percent": 77.15,
+      "bram9k": 50,
+      "bit_sha256": "f139e6a7e9eeb394bf6318fd57ebf4ff713905c56b37b73ec0223a1f7aa67689",
+      "kind": "production",
+      "run": "media/Runs/phy_area_c",
+      "bit": "media/Runs/phy_area_c/MultimediaSystem_media.bit",
+      "inputs_sha256": "ede2a77c4c680388ab6f28e70d2aa2e1703a8d32643ad6d51516dec9b7b611fd",
+      "settings_sha256": "49309e0df0bdd59661c5484a9d960b22a0fea6028060d048aa522fc374ca89ab",
+      "matches_current_sources": false
+    },
+    {
+      "board": "render",
+      "setup_wns_ns": 0.142,
+      "setup_tns_ns": 0.0,
+      "hold_wns_ns": 0.024,
+      "hold_tns_ns": 0.0,
+      "slice_percent": 60.47,
+      "bram9k": 53,
+      "bit_sha256": "68ae1a7013581e6160954fc28657d2441d3f1fc3f9c6354318052c1dc929884b",
+      "kind": "production",
+      "run": "render/Runs/phy_verify",
+      "bit": "render/Runs/phy_verify/MultimediaSystem_render.bit",
+      "inputs_sha256": "c66ea671c579a68c23066ac213cf5b74a79281dae0495b4104fe199af9bf9db6",
+      "settings_sha256": "f0e4adcf7eb5e1c22e4d39c9320ea4c15bb3ed3a85a35becec02d65716101016",
+      "matches_current_sources": false
+    },
+    {
+      "board": "media",
+      "setup_wns_ns": 0.588,
+      "setup_tns_ns": 0.0,
+      "hold_wns_ns": 0.188,
+      "hold_tns_ns": 0.0,
+      "slice_percent": 8.65,
+      "bram9k": 0,
+      "bit_sha256": "b85a67e97fa0f11bc7b7171e86522b8954be5834fb5126ef4a43aa68faaba7f6",
+      "kind": "prbs",
+      "run": "media/Runs/linktest/phy_qualified",
+      "bit": "media/Runs/linktest/phy_qualified/MultimediaSystem_media_linktest.bit",
+      "inputs_sha256": "dd3b53c585fb30d4577469e1cde9db758acf68e0ff075099bf888c7e90e237f9",
+      "settings_sha256": "14c70b1d210d874c0b22d8fb280a4e523928706aa63e0242f2bc87cc63fc6da9",
+      "matches_current_sources": false
+    },
+    {
+      "board": "render",
+      "setup_wns_ns": 0.432,
+      "setup_tns_ns": 0.0,
+      "hold_wns_ns": 0.212,
+      "hold_tns_ns": 0.0,
+      "slice_percent": 8.65,
+      "bram9k": 0,
+      "bit_sha256": "05a1a0a0b97eb476ad58c067815d8c92797145736eda6a0dd07f63211da3b85d",
+      "kind": "prbs",
+      "run": "render/Runs/linktest/phy_qualified",
+      "bit": "render/Runs/linktest/phy_qualified/MultimediaSystem_render_linktest.bit",
+      "inputs_sha256": "d9b3312c60d9e585bd5a0a4fe4031a8f3e533984492d99fc37b2ac1574b6e56b",
+      "settings_sha256": "9b661f29f47f8a6b95edca8f77a0aa12420f5587224d80d90e947ce65e3455d1",
+      "matches_current_sources": false
+    }
+  ],
+  "source_update": "2026-10-07: Ethernet constraints, PHY status qualification and render diagnostic fixes; no new bit built",
+  "gui_outputs": {
+    "media": "media/MultimediaSystem_media_Runs/phy_1/MultimediaSystem_media.bit",
+    "render": "render/MultimediaSystem_render_Runs/phy_1/MultimediaSystem_render.bit"
+  }
+}

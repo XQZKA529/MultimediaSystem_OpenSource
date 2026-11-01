@@ -1,0 +1,37 @@
+{
+  "font_sha256": "baada9a5172fe20886251aff0433fc38461912d5daf07287e7bee56620a8da96",
+  "supersampling": 8,
+  "coverage": [
+    0,
+    85,
+    170,
+    255
+  ],
+  "printable_ascii": [
+    32,
+    126
+  ],
+  "glyph": [
+    10,
+    14
+  ],
+  "cell": [
+    12,
+    16
+  ],
+  "font_size": 15,
+  "baseline": 11,
+  "ascii_bram32k": 1,
+  "diagnostic_bram32k": 1,
+  "diagnostic_glyph": [
+    15,
+    21
+  ],
+  "diagnostic_font_size": 24,
+  "diagnostic_baseline": 19,
+  "hdls": {
+    "font_rom.v": "e3104380c5e97788f3a9c8b6e99a1c856e56e8d08ea410c233c4855dcddc5815",
+    "font_audio_rows.vh": "01cb1b12f70e223cd7292fe565f0497baac9852866532e27f0dd1ff30902ecd0",
+    "font_diag_rows.vh": "296c57b8e8e0f1ce1390df24c716197fa31ac5aff3143085ae13ace95309bcdf"
+  }
+}

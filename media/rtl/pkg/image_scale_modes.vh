@@ -1,0 +1,6 @@
+`ifndef IMAGE_SCALE_MODES_VH
+`define IMAGE_SCALE_MODES_VH
+`define IMAGE_SCALE_CONTAIN 2'd0
+`define IMAGE_SCALE_COVER   2'd1
+`define IMAGE_SCALE_STRETCH 2'd2
+`endif

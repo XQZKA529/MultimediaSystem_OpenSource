@@ -1,0 +1,446 @@
+diff --git a/rtl/fat/fat32_ro.v b/rtl/fat/fat32_ro.v
+index fccedae..7212a68 100644
+--- a/rtl/fat/fat32_ro.v
++++ b/rtl/fat/fat32_ro.v
+@@ -94,6 +94,8 @@ localparam S_SFN_BUILD     = 8'd14;
+ localparam S_EMIT_START    = 8'd15;
+ localparam S_EMIT_NAME     = 8'd16;
+ localparam S_EMIT_END      = 8'd17;
++localparam S_EMIT_ADDR     = 8'd60;   // name_ram 同步读：给地址
++localparam S_EMIT_WAIT     = 8'd61;   // name_ram 同步读：等数据出口
+ localparam S_DIR_ADVANCE   = 8'd18;
+ localparam S_DIR_LOAD_WAIT = 8'd19;
+ localparam S_FAT_REQ       = 8'd20;
+@@ -121,6 +123,7 @@ localparam S_FAT_REQ_READY  = 8'd41;
+ localparam S_FILE_SELECT    = 8'd42;
+ localparam S_FILE_CHECK     = 8'd43;
+ localparam S_FILE_ISSUE     = 8'd44;
++localparam S_FAIL           = 8'd59;   // 错误收尾拍（见 fail_operation 注释）
+ 
+ localparam FAT_FOR_DIR  = 1'b0;
+ localparam FAT_FOR_FILE = 1'b1;
+@@ -152,6 +155,13 @@ reg [1:0] active_op;
+ reg [1:0] rd_kind;
+ reg [9:0] rd_index;
+ reg [27:0] io_timeout;
++// 超时判定预寄存：原「io_timeout>=IO_TIMEOUT_CYCLES-1」的 28 位比较在
++// S_RD_REQ/S_RD_WAIT 里直达 fail_operation 的 fat_error_code/done CE
++// （布线后 -0.107ns，net 占 62%）。改为在计数拍算出「下一拍到期」，
++// 检查拍只看寄存器位（代价：总等待少 1 拍，1 秒量级无影响）。
++reg        io_timeout_last;
++// 错误收尾拍（S_FAIL）锁存的错误码（见 fail_operation 注释）
++reg [7:0]  fail_code_r;
+ reg [7:0] sector_buf [0:511] /* fehdl force_ram=1, ram_style="bram" */;
+ reg [8:0] sector_addr;
+ reg [7:0] sector_q;
+@@ -161,7 +171,14 @@ reg [31:0] fat_mem [0:127] /* fehdl force_ram=1, ram_style="bram" */;
+ reg [6:0] fat_addr;
+ reg [31:0] fat_q;
+ reg [23:0] fat_assemble;
+-reg [7:0] name_ram [0:255];
++// 名字缓冲：原实现只有「组合读」(S_EMIT_NAME 里 name_ram[emit_pos] 同拍出字符)，
++// 综合器无法推断 BRAM ⇒ 摊成 **2048 个触发器**（256×8），是 fat32_ro 里
++// 最大的一块软面积（2026-09-26 面积复核：fat32_ro 3599 LUT / 2884 FF）。
++// 改为同步读（单写口 + 单读口，标准 SDP）并显式 force_ram ⇒ 进 BRAM，
++// 代价是每个字符多 2 拍（S_EMIT_ADDR / S_EMIT_WAIT），只在目录枚举时发生。
++reg [7:0] name_ram [0:255] /* fehdl force_ram=1, ram_style="bram" */;
++reg [7:0] name_rd_addr;
++reg [7:0] name_q;
+ reg fat_cache_valid;
+ reg [31:0] fat_cache_lba;
+ 
+@@ -208,6 +225,16 @@ reg [31:0] cycle_tortoise, cycle_power, cycle_lam;
+ reg [7:0] file_cluster_sector;
+ reg [7:0] file_read_sectors;
+ reg       file_abort_pending;
++// file 路径判定预寄存（S_FAT_EVAL 拍落地，S_FAT_CHECK 只看寄存器 ——
++// 与 map 路径 E3 同款收口：原先 EOC/valid/cycle 三棵 32 位比较树在
++// S_FAT_CHECK 一拍里直出，直达 fail_operation / state 次态 mux）：
++reg        fat_next_eoc, fat_next_valid, fat_next_cycle;
++reg        cycle_lam_eq_power;          // cycle_lam_next==cycle_power（Brent 翻倍点）
++reg        dir_hops_max;                // dir_hops>=max_cluster（DIR 上下文）
++reg        fat_file_rem_zero;           // file_remaining==0（FAT 走查期间稳定）
++// file_last_in_cluster：S_FILE_ISSUE 拍算好，S_FILE_AFTER 不再做
++// 「8 位加+比较」组合（该锥曾直达 file_cluster_sector.ce / state mux）：
++reg        file_last_in_cluster;
+ 
+ reg [31:0] tmp32a, tmp32b, data_sectors, cluster_count;
+ reg [31:0] fat_area_sectors, data_start_offset, cluster_lba_offset;
+@@ -258,6 +285,21 @@ reg        map_next_eoc;
+ reg        map_next_cycle;
+ // MBR 扫描末尾判定预计算（原 mbr_scan_idx→fat_error_code.ce -0.105ns）：
+ reg        mbr_last;
++// MBR 槽命中判定预寄存（原：「is_fat32_type(mbr_sel_type)&&(mbr_sel_lba!=0)」
++// 的组合锥在 S_MOUNT_MBR_CHK 一拍里直达 partition_lba/partition_sectors
++// 的 CE 与 start_buffer_read 的状态译码；布线后曾是全设计最差路径
++// -0.167ns，cell 仅 2.2ns / net 7.7ns）。改为在 S_MOUNT_MBR 装载拍用常数
++// 索引同槽算出，CHK 拍只看寄存器。
++reg        mbr_hit;
++// map 走表 cycle 末尾判定与 remaining 归零判定预寄存：
++//   map_cycle_last —— S_MAP_FAT_WAIT 拍算好（lam/power 只在 CHK 变），
++//                     S_MAP_FAT_CHK 不再做「32 位减+比较」；
++//   map_rem_zero   —— S_MAP_ACC 拍用「map_remaining==map_use_bytes」等价
++//                     判定（减法结果下拍才可见，等值比较本拍即可），
++//                     S_MAP_SELECT/S_MAP_EMIT 不再做 32 位归零比较
++//                     （map_remaining→state 次态曾是布线后最差路径之一）。
++reg        map_cycle_last;
++reg        map_rem_zero;
+ 
+ assign dbg_fat_state = state;
+ // file_busy / map_busy 打一拍再出模块：原来它们是 state 的组合函数，直接
+@@ -342,19 +384,28 @@ task start_buffer_read;
+     input [1:0] kind;
+     begin
+         blk_lba<=lba; blk_count<=count; rd_return_state<=ret; rd_kind<=kind;
+-        rd_index<=0; io_timeout<=0; state<=S_RD_REQ;
++        rd_index<=0; io_timeout<=0; io_timeout_last<=1'b0; state<=S_RD_REQ;
+     end
+ endtask
+ 
++// 错误收尾：判定拍只登记（fail_code_r / state<=S_FAIL），下一拍由 S_FAIL
++// 统一落「fat_error_code + 对应 op 的 done/ok 位」。
++//
++// 为什么拆这一拍（2026-09-26 sd 域时序收口）：
++//   原先本 task 在同一拍里做 5 件事（写错误码 + 按 active_op 四选一的
++//   done/ok + 回 IDLE）。它有 25 个调用点，于是 fat_error_code / *_done
++//   的 CE 是一棵「25 个状态×条件的 OR 树」，布线后是 sd 域最深的一条
++//   （seed_15 的唯一违规：state_b[2] → fat_error_code[2].a[0]，-0.482ns，
++//   cell 3.4ns / net 6.8ns）。拆拍后 CE 退化成 (state==S_FAIL) 的单状态
++//   译码；错误路径多 1 拍（10 ns）对"播放停止/报错"这类语义无影响。
++//   注：几处旁路点（S_IDLE 的 map 队满/abort 拒绝、dir_start 未挂载、
++//   file_abort 即时中止、S_MAP_SELECT 的 abort、GEOM5 成功清零）保持原样，
++//   它们本是独立小锥，改动它们会碰 state 多写优先级问题，得不偿失。
+ task fail_operation;
+     input [7:0] code;
+     begin
+-        fat_error_code<=code;
+-        if (active_op==OP_DIR) begin dir_done<=1; dir_ok<=0; end
+-        else if (active_op==OP_FILE) begin file_done<=1; file_ok<=0; end
+-        else if (active_op==OP_MAP) begin map_done<=1; map_ok<=0; end
+-        else begin mount_done<=1; mount_ok<=0; end
+-        state<=S_IDLE;
++        fail_code_r <= code;
++        state       <= S_FAIL;
+     end
+ endtask
+ 
+@@ -367,6 +418,7 @@ task start_map_now;
+         map_ok<=0; fat_error_code<=0; map_have_run<=0;
+         map_seg_count<=0;
+         map_remaining<=map_size;
++        map_rem_zero<=(map_size==32'd0);   // 直达 S_MAP_SELECT，绕开 ACC 的预寄存
+         map_cluster<=map_first_cluster;
+         map_hops<=0; map_hop_limit<=32'd1_000_000;
+         map_cycle_tortoise<=map_first_cluster; map_cycle_power<=1; map_cycle_lam<=0;
+@@ -379,11 +431,13 @@ endtask
+ always @(posedge clk) begin
+     sector_q <= sector_buf[sector_addr];
+     fat_q    <= fat_mem[fat_addr];
++    name_q   <= name_ram[name_rd_addr];
+ end
+ 
+ always @(posedge clk or posedge rst) begin
+   if (rst) begin
+     state<=S_IDLE; active_op<=0; blk_req<=0; blk_lba<=0; blk_count<=1; rd_index<=0; io_timeout<=0;
++    io_timeout_last<=1'b0;
+     file_read_sectors<=1; file_abort_pending<=0;
+     mount_done<=0; mount_ok<=0; fat_error_code<=0;
+     dir_entry_start<=0; dir_name_valid<=0; dir_entry_end<=0; dir_done<=0; dir_ok<=0;
+@@ -401,6 +455,11 @@ always @(posedge clk or posedge rst) begin
+     map_cluster_off<=0; cluster_count_p1<=0; cluster_x4<=0; fat_bytes<=0; mbr_last<=0;
+     mount_sig_bad<=0; mount_fs_cand<=0; geom5_bad<=0;
+     map_next_valid<=0; map_next_eoc<=0; map_next_cycle<=0;
++    fat_next_eoc<=0; fat_next_valid<=0; fat_next_cycle<=0;
++    cycle_lam_eq_power<=0; dir_hops_max<=0; fat_file_rem_zero<=0;
++    file_last_in_cluster<=0; map_cycle_last<=0; map_rem_zero<=0;
++    fail_code_r<=0;
++    name_rd_addr<=0;
+     
+     dbg_dir_entry_count<=0; lfn_active<=0; lfn_valid<=0;
+   end else begin
+@@ -426,7 +485,7 @@ always @(posedge clk or posedge rst) begin
+     // A file abort is cooperative: if an SD burst has already been granted,
+     // consume and discard the remainder of that short burst before returning
+     // idle.  This keeps the physical SD channel and FAT service synchronized.
+-    if (file_abort && active_op==OP_FILE && state!=S_IDLE) begin
++    if (file_abort && active_op==OP_FILE && state!=S_IDLE && state!=S_FAIL) begin
+       file_abort_pending<=1;
+       if (state!=S_RD_REQ && state!=S_RD_WAIT) begin
+         blk_req<=0; file_done<=1; file_ok<=0; fat_error_code<=`FAT_E_ABORT;
+@@ -463,6 +522,7 @@ always @(posedge clk or posedge rst) begin
+           // bug3: promote latched pending map when walker goes idle
+           map_pending<=1'b0;
+           map_remaining<=map_pend_size;
++          map_rem_zero<=(map_pend_size==32'd0);   // 直达 S_MAP_SELECT
+           map_cluster<=map_pend_cluster;
+           active_op<=OP_MAP;
+           map_accept<=1'b1;
+@@ -513,9 +573,12 @@ always @(posedge clk or posedge rst) begin
+ 
+       S_RD_REQ: begin
+         blk_req<=1;
+-        if (blk_grant) begin blk_req<=0; io_timeout<=0; state<=S_RD_WAIT; end
+-        else if (io_timeout>=IO_TIMEOUT_CYCLES-1) begin blk_req<=0; fail_operation(`FAT_E_TIMEOUT); end
+-        else io_timeout<=io_timeout+1;
++        if (blk_grant) begin blk_req<=0; io_timeout<=0; io_timeout_last<=1'b0; state<=S_RD_WAIT; end
++        else if (io_timeout_last) begin blk_req<=0; fail_operation(`FAT_E_TIMEOUT); end
++        else begin
++          io_timeout<=io_timeout+28'd1;
++          io_timeout_last<=(io_timeout+28'd1>=IO_TIMEOUT_CYCLES-1);
++        end
+       end
+       S_RD_WAIT: begin
+         if (blk_data_valid) begin
+@@ -575,8 +638,11 @@ always @(posedge clk or posedge rst) begin
+             if (rd_kind==RD_FAT) fat_cache_valid<=1;
+             state<=rd_return_state;
+           end
+-        end else if (io_timeout>=IO_TIMEOUT_CYCLES-1) fail_operation(`FAT_E_TIMEOUT);
+-        else io_timeout<=io_timeout+1;
++        end else if (io_timeout_last) fail_operation(`FAT_E_TIMEOUT);
++        else begin
++          io_timeout<=io_timeout+28'd1;
++          io_timeout_last<=(io_timeout+28'd1>=IO_TIMEOUT_CYCLES-1);
++        end
+       end
+ 
+       S_MOUNT_SECTOR0: begin
+@@ -606,10 +672,18 @@ always @(posedge clk or posedge rst) begin
+         // （该比较曾直接进 fat_error_code 的 CE，布线后 -0.105ns）。
+         // 注意此处 mbr_scan_idx 仍是「本槽」编号，与 CHK 拍看到的旧值同源。
+         mbr_last <= (mbr_scan_idx==3);
++        // 命中判定同样预寄存（见 mbr_hit 声明处）：case 里的索引是常数，
++        // 直接读 mbr_type[i]/mbr_lba[i] 寄存器，不引入 4:1 mux。
++        case(mbr_scan_idx)
++          0:       mbr_hit <= is_fat32_type(mbr_type[0]) && (mbr_lba[0]!=0);
++          1:       mbr_hit <= is_fat32_type(mbr_type[1]) && (mbr_lba[1]!=0);
++          2:       mbr_hit <= is_fat32_type(mbr_type[2]) && (mbr_lba[2]!=0);
++          default: mbr_hit <= is_fat32_type(mbr_type[3]) && (mbr_lba[3]!=0);
++        endcase
+         state<=S_MOUNT_MBR_CHK;
+       end
+       S_MOUNT_MBR_CHK: begin
+-        if (is_fat32_type(mbr_sel_type)&&(mbr_sel_lba!=0)) begin
++        if (mbr_hit) begin
+           partition_lba<=mbr_sel_lba; partition_sectors<=mbr_sel_size;
+           start_buffer_read(mbr_sel_lba,1,S_MOUNT_DBR,RD_MOUNT);
+         end else if (mbr_last) fail_operation(`FAT_E_MBR);
+@@ -807,10 +881,13 @@ always @(posedge clk or posedge rst) begin
+           sfn_pos<=sfn_next_pos; state<=S_SFN_BUILD;
+         end
+       end
+-      S_EMIT_START: begin dir_entry_start<=1; state<=(dir_entry_name_len==0)?S_EMIT_END:S_EMIT_NAME; end
++      S_EMIT_START: begin dir_entry_start<=1; state<=(dir_entry_name_len==0)?S_EMIT_END:S_EMIT_ADDR; end
++      S_EMIT_ADDR:  begin name_rd_addr<=emit_pos; state<=S_EMIT_WAIT; end
++      S_EMIT_WAIT:  begin state<=S_EMIT_NAME; end    // name_q 在本拍末变为 name_ram[emit_pos]
+       S_EMIT_NAME: begin
+-        dir_name_valid<=1; dir_name_char<=name_ram[emit_pos]; dir_name_index<=emit_pos;
+-        if (emit_pos+1>=dir_entry_name_len) state<=S_EMIT_END; else emit_pos<=emit_pos+1;
++        dir_name_valid<=1; dir_name_char<=name_q; dir_name_index<=emit_pos;
++        if (emit_pos+1>=dir_entry_name_len) state<=S_EMIT_END;
++        else begin emit_pos<=emit_pos+1; state<=S_EMIT_ADDR; end
+       end
+       S_EMIT_END: begin
+         dir_entry_end<=1; dbg_dir_entry_count<=dbg_dir_entry_count+1; lfn_active<=0; lfn_valid<=0;
+@@ -827,6 +904,10 @@ always @(posedge clk or posedge rst) begin
+ 
+       S_FAT_REQ: begin
+         fat_req_lba<=fat_lba+(fat_query_cluster>>7);
++        // +1 加法从 S_FAT_EVAL 前移到本拍（file_hops/cycle_lam 只在
++        // S_FAT_CHECK 才变，整个 FAT 走查期间稳定），EVAL 拍只剩比较树：
++        file_hops_next<=file_hops+32'd1;
++        cycle_lam_next<=cycle_lam+32'd1;
+         state<=S_FAT_REQ_READY;
+       end
+       S_FAT_REQ_READY: begin
+@@ -844,27 +925,35 @@ always @(posedge clk or posedge rst) begin
+       S_FAT_EVAL: begin
+         if (fat_cache_valid) begin
+           fat_next_cluster<={4'd0,fat_q[27:0]};
+-          // Pre-compute the +1 operands one cycle early: S_FAT_CHECK then only
+-          // runs a 32-bit compare against these registers (Brent detection in
+-          // the same style: constant storage, no extra FAT reads).
+-          file_hops_next<=file_hops+32'd1;
+-          cycle_lam_next<=cycle_lam+32'd1;
++          // file 路径判定预寄存（map 路径 E3 的 file 版）：三棵 32 位
++          // 比较树在本拍落地成单比特，S_FAT_CHECK 只看寄存器——原先
++          // 该锥直达 fail_operation 的错误mux 与 state 次态。
++          // 注：fat_q[27:0] 零扩展后恒 < 32'h0ffffff0，
++          //     valid_data_cluster 的第三条件恒真，此处省略。
++          fat_next_eoc   <= (fat_q[27:0] >= 28'h0ffffff8);
++          fat_next_valid <= (fat_q[27:0] >= 28'd2) &&
++                            ({4'd0,fat_q[27:0]} <= max_cluster);
++          fat_next_cycle <= ({4'd0,fat_q[27:0]} == cycle_tortoise) ||
++                            (file_hops_next >= file_hop_limit);
++          cycle_lam_eq_power <= (cycle_lam_next == cycle_power);
++          dir_hops_max       <= (dir_hops >= max_cluster);
++          fat_file_rem_zero  <= (file_remaining == 32'd0);
+           state<=S_FAT_CHECK;
+         end else fail_operation(`FAT_E_TIMEOUT);
+       end
+       S_FAT_CHECK: begin
+-          if (fat_next_cluster>=32'h0ffffff8) begin
++          if (fat_next_eoc) begin
+             if (fat_context==FAT_FOR_DIR) begin dir_done<=1; dir_ok<=1; state<=S_IDLE; end
+-            else if (file_remaining==0) begin file_done<=1; file_ok<=1; state<=S_IDLE; end
++            else if (fat_file_rem_zero) begin file_done<=1; file_ok<=1; state<=S_IDLE; end
+             else fail_operation(`FAT_E_CLUSTER);
+-          end else if (!valid_data_cluster(fat_next_cluster)) fail_operation(`FAT_E_NDATA);
++          end else if (!fat_next_valid) fail_operation(`FAT_E_NDATA);
+           else if (fat_context==FAT_FOR_DIR) begin
+-            if (dir_hops>=max_cluster) fail_operation(`FAT_E_DIR_HOPS);
++            if (dir_hops_max) fail_operation(`FAT_E_DIR_HOPS);
+             else begin dir_cluster<=fat_next_cluster; dir_sector<=0; entry_off<=0; dir_hops<=dir_hops+1; state<=S_DIR_LBA; end
+           end else begin
+-            if ((fat_next_cluster==cycle_tortoise)||(file_hops_next>=file_hop_limit)) fail_operation(`FAT_E_CYCLE);
++            if (fat_next_cycle) fail_operation(`FAT_E_CYCLE);
+             else begin file_cluster<=fat_next_cluster; file_cluster_sector<=0; file_hops<=file_hops_next; state<=S_FILE_LBA; end
+-            if (cycle_lam_next==cycle_power) begin
++            if (cycle_lam_eq_power) begin
+               cycle_tortoise<=fat_next_cluster; cycle_power<=cycle_power<<1; cycle_lam<=0;
+             end else cycle_lam<=cycle_lam_next;
+           end
+@@ -889,6 +978,12 @@ always @(posedge clk or posedge rst) begin
+         end
+       end
+       S_FILE_ISSUE: begin
++        // 「本簇是否读完」预寄存：S_FILE_AFTER 只剩寄存器判断。
++        // file_read_sectors 经 S_FILE_READ 钳位后恒有
++        // file_cluster_sector+file_read_sectors<=sectors_per_cluster，
++        // 故 !file_last_in_cluster ≡ 原 sum<spc 的活比较。
++        file_last_in_cluster <= ({2'd0,file_cluster_sector}+{2'd0,file_read_sectors}
++                                 >= {2'd0,sectors_per_cluster});
+         start_buffer_read(data_lba+cluster_lba_offset+
+                           {24'd0,file_cluster_sector},
+                           {8'd0,file_read_sectors},S_FILE_AFTER,RD_FILE);
+@@ -899,7 +994,7 @@ always @(posedge clk or posedge rst) begin
+       end
+       S_FILE_AFTER: begin
+         if (file_remaining==0) begin file_done<=1; file_ok<=1; state<=S_IDLE; end
+-        else if (file_cluster_sector+file_read_sectors<sectors_per_cluster) begin
++        else if (!file_last_in_cluster) begin
+           file_cluster_sector<=file_cluster_sector+file_read_sectors;
+           state<=S_FILE_READ;
+         end else begin
+@@ -919,7 +1014,7 @@ always @(posedge clk or posedge rst) begin
+         if (map_abort) begin
+           map_abort_pending<=1; map_ok<=0; fat_error_code<=`FAT_E_ABORT;
+           map_done<=1; state<=S_IDLE;
+-        end else if (map_remaining==0) begin
++        end else if (map_rem_zero) begin
+           if (map_have_run) begin
+             if (map_seg_count >= MAP_DEPTH_C) fail_operation(`FAT_E_MAP_OVF);
+             else begin
+@@ -983,13 +1078,16 @@ always @(posedge clk or posedge rst) begin
+         map_cluster_prev_p1 <= map_cluster + 32'd1;
+         map_prev_full       <= (map_use_nsec == spc_nsec);
+         map_remaining       <= map_remaining - map_use_bytes;
++        // 归零判定预寄存：新 remaining==0 ⟺ 本拍 remaining==use_bytes
++        // （等值比较不需等减法结果，use_bytes 恒 >0 已由 SELECT/USE 保证）
++        map_rem_zero        <= (map_remaining == map_use_bytes);
+                 map_hops_next       <= map_hops + 1;
+         state               <= S_MAP_EMIT;
+       end
+ 
+       S_MAP_EMIT: begin
+         map_entry_valid<=0;
+-        if (map_remaining==0) begin
++        if (map_rem_zero) begin
+           if (map_have_run) begin
+             if (map_seg_count >= MAP_DEPTH_C) fail_operation(`FAT_E_MAP_OVF);
+             else begin
+@@ -1025,6 +1123,9 @@ always @(posedge clk or posedge rst) begin
+ 
+       S_MAP_FAT_WAIT: begin
+         fat_addr<=map_cluster[6:0];
++        // cycle 末尾判定预寄存：lam/power 只在 S_MAP_FAT_CHK 才变，
++        // 此处先算好，CHK 拍不再做「32 位减+比较」组合。
++        map_cycle_last <= (map_cycle_lam == map_cycle_power-32'd1);
+         state<=S_MAP_FAT_GET;
+       end
+ 
+@@ -1042,7 +1143,7 @@ always @(posedge clk or posedge rst) begin
+ 
+       S_MAP_FAT_CHK: begin
+         if (map_next_eoc) begin
+-          if (map_remaining==0) begin
++          if (map_rem_zero) begin
+             if (map_have_run) state<=S_MAP_EMIT;
+             else begin map_ok<=1; map_done<=1; state<=S_IDLE; end
+           end else fail_operation(`FAT_E_CLUSTER);
+@@ -1051,7 +1152,7 @@ always @(posedge clk or posedge rst) begin
+         else begin
+           map_cluster<=fat_next_cluster;
+           map_hops<=map_hops_next;
+-                    if (map_cycle_lam==map_cycle_power-1) begin
++                    if (map_cycle_last) begin
+             map_cycle_tortoise<=fat_next_cluster;
+             map_cycle_power<=map_cycle_power<<1;
+             map_cycle_lam<=0;
+@@ -1067,6 +1168,19 @@ always @(posedge clk or posedge rst) begin
+         state<=S_IDLE;
+       end
+ 
++      // 错误收尾拍：把所有（25 处）fail_operation 调用点的落码/done 动作
++      // 收到这里一处，CE 锥从多状态 OR 树变成单状态译码。
++      // active_op 在判定拍已定，到这里仍保持原值。
++      S_FAIL: begin
++        blk_req<=0;
++        fat_error_code<=fail_code_r;
++        if (active_op==OP_DIR)       begin dir_done<=1;   dir_ok<=0;   end
++        else if (active_op==OP_FILE) begin file_done<=1;  file_ok<=0;  end
++        else if (active_op==OP_MAP)  begin map_done<=1;   map_ok<=0;   end
++        else                         begin mount_done<=1; mount_ok<=0; end
++        state<=S_IDLE;
++      end
++
+       default: state<=S_IDLE;
+     endcase
+     end
+diff --git a/rtl/ui/file_browser.v b/rtl/ui/file_browser.v
+index a4b0dd2..4495dd5 100644
+--- a/rtl/ui/file_browser.v
++++ b/rtl/ui/file_browser.v
+@@ -372,9 +372,24 @@ module file_browser #(
+     //=========================================================================
+     wire idle_ok = img_idle && !fat_busy;
+ 
+-    // 光标：仅 cur 一个寄存器，行列都从它派生
+-    wire [15:0] cur_next  = (cur + 16'd1 >= ent_cnt) ? 16'd0 : (cur + 16'd1);
+-    wire        page_chg  = ({cur_next[15:3],3'b000} != cache_page_base);
++    // 光标：仅 cur 一个寄存器，行列都从它派生。
++    // cur_next/page_chg 预寄存（100 MHz setup 收口）：原组合链
++    // 「cur+1≥ent_cnt 比较 → cur_next → 页基比较」直达 cur.ce /
++    // scan_page_base.ce / state 次态。cur 只在 key_sel_pulse 时变、
++    // 两次按键间隔 ≥50 ms 消抖，预寄存值在使用点必然新鲜。
++    reg  [15:0] cur_next_r;
++    reg         page_chg_r;
++    wire [15:0] cur_next_w  = (cur + 16'd1 >= ent_cnt) ? 16'd0 : (cur + 16'd1);
++    wire        page_chg_w  = ({cur_next_w[15:3],3'b000} != cache_page_base);
++    always @(posedge clk or posedge rst) begin
++        if (rst) begin
++            cur_next_r <= 16'd0;
++            page_chg_r <= 1'b0;
++        end else begin
++            cur_next_r <= cur_next_w;
++            page_chg_r <= page_chg_w;
++        end
++    end
+     wire [15:0] scan_slot = scan_count - scan_page_base;
+     wire        capture_this_entry = (scan_count >= scan_page_base) &&
+                                      (scan_count < scan_page_base + PAGE_LINES);
+@@ -585,11 +600,11 @@ module file_browser #(
+                     ui_active <= 1'b0;
+                     state     <= S_CLOSED;
+                 end else if (key_sel_pulse && (ent_cnt != 16'd0)) begin
+-                    cur <= cur_next;
++                    cur <= cur_next_r;
+                     if (status_kind != ST_SCAN)
+                         status_kind <= ST_BLANK;
+-                    if (page_chg) begin
+-                        scan_page_base   <= {cur_next[15:3],3'b000};
++                    if (page_chg_r) begin
++                        scan_page_base   <= {cur_next_r[15:3],3'b000};
+                         status_kind      <= ST_SCAN;
+                         state            <= S_WAIT_IDLE;
+                     end

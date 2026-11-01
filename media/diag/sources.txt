@@ -1,0 +1,14 @@
+al_ip/TEMAC_CORE.ipc
+rtl/clock/board_reset.v
+rtl/clock/board_sys_pll.v
+rtl/clock/reset_sync.v
+rtl/link/db_ethernet.v
+rtl/link/vendor/IDDR.v
+rtl/link/vendor/ODDR.v
+rtl/link/vendor/rgmii_interface.v
+rtl/link/vendor/temac_block.v
+rtl/link/vendor/tx_clk_en_gen.v
+diag/db_prbs_mac.v
+diag/linktest.adc
+diag/linktest.sdc
+diag/top_linktest_media.v
