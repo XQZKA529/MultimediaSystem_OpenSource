@@ -4,7 +4,7 @@
 
 ## 接线与启动
 
-1. 两块 HX4S20 网口用网线直连，要求千兆全双工。
+1. 两块 HX4S20C 网口用网线直连，要求千兆全双工。
 2. FAT32 SDHC/SDXC 卡插 media，BMP/WAV/TXT 放根目录；HDMI 接 render，声音从 HDMI 接收设备输出。
 3. TM1650 接 render J2：pin31 SCL/J12、pin33 SDA/K14、pin29 3.3V、pin30 GND；SCL/SDA 外部上拉到 3.3V。
 4. 可选应急源接 render J2 pin1 GPIOB0/P4、pin2 GPIOB1/N4，输入 0/3.3V 并共地，内部下拉。

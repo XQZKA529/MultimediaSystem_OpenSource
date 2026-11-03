@@ -50,12 +50,13 @@ Copy-Item -Recurse media/Runs/syn_final1msc media/Runs/syn_final1msc_9
 
 ## 复现步骤
 
-1. **准备源码**：克隆仓库并切到该提交，工作树必须干净（构建指纹会比对源码）。
+1. **准备源码**：直接使用本包即可——它就是提交 `682b0ab` 的文件快照，无需 checkout 私有仓库历史。构建前确认包内源码/脚本未被改动；本包两板的输入指纹已与签核 bit 对应（media 71 项、render 114 项 SHA256 全部一致）。
 
    ```powershell
-   git checkout 682b0ab14712e401bc3ae345ef950a113dfae1f6
-   git status --short        # 输出为空
+   git status --short        # 若已初始化仓库，应为空
    ```
+
+   两板 `.al` 里的 `Path` 为相对路径 `.`。若在 TD 中打开并保存过工程，它会被改写成本机绝对路径；换到别的机器构建时若提示找不到工程或源码，删除对应的 `.al` 后重跑即可（`project.tcl` 会按当前目录重建，不影响输入指纹）。
 
 2. **环境**：TD 6.2.168116，单实例工具，构建前确认没有其它 TD 进程（`tasklist | findstr td_commands_prompt`）；两板不要同时构建。
 

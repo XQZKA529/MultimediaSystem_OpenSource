@@ -1,6 +1,6 @@
 # 双板 HDMI 多媒体播放系统
 
-基于两块 HX4S20 / 安路 EG4S20BG256 的纯 RTL 多媒体终端。**media** 读取 SD 卡、解析文件和组织播放，**render** 接收图片与 PCM、管理 SDRAM 并输出 HDMI 音视频。系统不使用 CPU、操作系统或 IP/UDP 软件栈，两板通过 RTL8211E 千兆网口直连。
+基于两块 HX4S20C / 安路 EG4S20BG256 的纯 RTL 多媒体终端。**media** 读取 SD 卡、解析文件和组织播放，**render** 接收图片与 PCM、管理 SDRAM 并输出 HDMI 音视频。系统不使用 CPU、操作系统或 IP/UDP 软件栈，两板通过 RTL8211E 千兆网口直连。
 
 本说明以 `media/`、`render/` 的实际顶层、源文件清单、参数和约束为准。
 

@@ -1,0 +1,2 @@
+Pillow>=10,<13
+miniaudio>=1.71,<2

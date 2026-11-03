@@ -17,11 +17,17 @@
 - `test_audio/`（含版权音乐）与 `fpga_bmp_1280x720/`（标准测试图）等示例素材，请自备；格式要求见 `README.md`。
 - `_apug011/`、`doc/refs/`、`doc/reference/` 等安路/板卡厂商文档。
 - 构建报告与仿真证据（`Runs/`、`build/evidence/`、`log/`）、ChipWatcher 配置、旧单板基线。
-- 生成的项目文件（`*.al`）：在 `media/`、`render/` 下执行 `build/run.ps1 -Stage project` 可重新生成。
+- 两板工程入口 `media/MultimediaSystem_media.al`、`render/MultimediaSystem_render.al` 已包含，`Path` 写成相对路径 `.`，可在任意目录直接打开；TD 首次打开并关闭后会把 `Path` 改成本机绝对路径，属正常本地行为，建议不要提交这一改动。其余 `linktest` 等生成的 `.al` 不在包内，可用 `build/run.ps1 -Stage project` 重建。
 
 ## 签核 bit
 
 - `release/Second_Release_682b0ab/` 内为第二次签核的两板 bit 与 SHA256SUMS，按现状提供，仅供开发与验收参考；对应的时序报告不在本包中。
+
+## 上位机源码（host_app）
+
+- `host_app/` 是“影序 · FPGA 素材管理”绿色版源码：Python 3.12 + Tkinter 界面，图像处理用 Pillow，音频解码用 miniaudio，单文件打包用 PyInstaller。
+- 构建：`pip install -r host_app/requirements.txt`，然后运行 `powershell -File host_app/build_standalone.ps1`；产物在 `host_app/dist/`。仓库根目录也提供预编译的单文件 EXE。
+- 第三方许可：Pillow（HPND）、miniaudio（MIT，构建脚本会把其 LICENSE 打入 EXE）、PyInstaller（仅作打包工具）。本仓库暂未附项目级许可证。
 
 ## 许可证
 
